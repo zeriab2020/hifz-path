@@ -203,7 +203,7 @@ function tile(s, p, kid) {
   const cls = st.due ? "due" : st.status;
   const pct = st.status === "memorized" ? 100 : Math.round(st.known / st.total * 100);
   const chip = st.due ? `<span class="chip due">Review</span>` : st.status === "memorized" ? `<span class="chip memorized">${I.check} Memorized</span>` : st.status === "learning" ? `<span class="chip learning">${st.known}/${st.total}</span>` : `<span>${st.total} ayahs</span>`;
-  return `<a class="surah-tile ${cls}" href="#/kid/${kid.id}/s/${s.n}/${st.due ? "test" : "learn"}" style="text-decoration:none;color:inherit">
+  return `<a class="surah-tile ${cls}" href="#/kid/${kid.id}/s/${s.n}/${st.due ? "test" : st.status === "memorized" ? "learn" : "memorize"}" style="text-decoration:none;color:inherit">
     <span class="num">${s.n}</span>
     <span class="sn-ar">${esc(s.ar)}</span>
     <span class="sn-en">${esc(s.en)}</span>
@@ -258,12 +258,112 @@ function renderSurah(s, tab) {
       ${st.status === "memorized" && st.nextReview ? `<span class="small muted">Next review: ${relDays(st.nextReview)}</span>` : ""}</div>
     </div>
     <div class="tabs" role="tablist">
-      ${[["learn", I.book, "Listen & learn"], ["test", I.eye, "Test myself"], ["record", I.mic, "Record"]].map(([k, ic, l]) =>
+      ${[["memorize", I.repeat, "Memorize"], ["learn", I.book, "Listen"], ["test", I.eye, "Test"], ["record", I.mic, "Record"]].map(([k, ic, l]) =>
         `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${ic}<span>${l}</span></button>`).join("")}
     </div>
     <div id="tabbody"></div>`;
   $$(".tabs button").forEach(b => b.onclick = () => { history.replaceState(null, "", `#/kid/${kid.id}/s/${s.n}/${b.dataset.tab}`); route(); });
-  ({ learn: renderLearn, test: renderTest, record: renderRecord }[tab] || renderLearn)(s);
+  ({ memorize: renderMemorize, learn: renderLearn, test: renderTest, record: renderRecord }[tab] || renderMemorize)(s);
+}
+
+/* ---- Memorize: repeat each ayah N times (default 20); the last time is from memory ---- */
+function renderMemorize(s) {
+  const kid = kidById(S.kidId), N = s.ayat.length, REPS = settings.reps || 20;
+  const pr = () => S.progress[s.n] || {};
+  const known = () => new Set(pr().known || []);
+  const range = Array.from({ length: N }, (_, i) => i + 1);
+  let a = (S.memoAyah || {})[s.n] || range.find(i => !known().has(i)) || 1;
+  let count = Math.min((pr().memo || {})[a] || 0, REPS - 1);
+  let auto = S.memoAuto ?? true;
+  const body = $("#tabbody");
+
+  const saveCount = () => {
+    const memo = { ...(pr().memo || {}), [a]: count };
+    saveSurah(s.n, { memo, status: pr().status === "memorized" ? "memorized" : "learning", updatedAt: Date.now() }).catch(console.error);
+  };
+  const playAyah = (onEnd) => player.play({ s: s.n, from: a, to: a, repeat: 1, rate: 1, basmala: false }, () => $(".memo-ayah")?.classList.add("playing"),
+    () => { $(".memo-ayah")?.classList.remove("playing"); onEnd?.(); });
+  const pickAyah = n => { a = n; S.memoAyah = { ...(S.memoAyah || {}), [s.n]: a }; count = known().has(a) ? 0 : Math.min((pr().memo || {})[a] || 0, REPS - 1); player.stop(true); draw(); };
+  const header = () => `
+    <div class="row" style="margin-bottom:10px">
+      <label class="small muted" style="font-weight:800">Ayah
+        <select id="mpick" style="width:auto;min-height:38px;padding:4px 10px">${range.map(n => `<option value="${n}" ${n === a ? "selected" : ""}>${n}${known().has(n) ? " ✓" : ""}</option>`).join("")}</select></label>
+      <span class="spacer"></span>
+      <span class="small muted"><b>${known().size}</b> of ${N} ayahs saved</span>
+    </div>`;
+
+  function draw() {
+    if (count < REPS - 1) {
+      body.innerHTML = `
+        <div class="card memo-card">
+          ${header()}
+          <div class="memo-ring">${ring(count / REPS, 96, `${count}/${REPS}`)}</div>
+          <p class="muted" style="margin:6px 0 2px">${count === 0 ? `Listen, then say ayah ${a} out loud. You'll repeat it ${REPS} times.` : `Repeat ${count + 1} of ${REPS} — say it out loud`}</p>
+          <p class="small muted" style="margin:0">Repeat ${REPS} is from your head, with the words hidden.</p>
+          <div class="memo-ayah"><div class="text">${ayahHtml(s, a)}</div></div>
+          <button class="btn big memo-go" id="said">${I.check} I said it</button>
+          <div class="row" style="justify-content:center;margin-top:12px">
+            <button class="btn secondary sm" id="mlisten">${I.play} Listen</button>
+            <label class="toggle"><input type="checkbox" id="mauto" ${auto ? "checked" : ""}> Play the reciter before each repeat</label>
+          </div>
+          <div class="memo-dots">${Array.from({ length: REPS }, (_, i) => `<i class="${i < count ? "ok" : i === count ? "cur" : ""}${i === REPS - 1 ? " last" : ""}"></i>`).join("")}</div>
+        </div>`;
+      $("#said").onclick = () => {
+        player.stop(true); count++; saveCount();
+        if (count === REPS - 1) { chime(true); return draw(); }
+        draw(); if (auto) playAyah();
+      };
+      $("#mlisten").onclick = () => playAyah();
+      $("#mauto").onchange = e => { auto = S.memoAuto = e.target.checked; };
+    } else {
+      body.innerHTML = `
+        <div class="card memo-card">
+          ${header()}
+          <div class="memo-ring">${ring((REPS - 1) / REPS, 96, `${REPS}/${REPS}`)}</div>
+          <h2 style="margin:6px 0">Last time — from your head! 🧠</h2>
+          <p class="muted">Say ayah ${a} out loud without looking. Then check yourself.</p>
+          ${a > 1 ? `<div class="small muted">Before it:</div><div class="prev-ayah">${ayahHtml(s, a - 1)}</div>` : ""}
+          <div class="hidden-ayah" id="mhid"><div><div style="font-size:1.3rem;font-weight:900">Ayah ${a}</div><div id="mhint"></div></div></div>
+          <div class="row" style="justify-content:center" id="macts">
+            <button class="btn ghost" id="mhintb">Hint: first word</button>
+            <button class="btn gold big" id="mrev">${I.eye} I said it — show me</button>
+          </div>
+        </div>`;
+      $("#mhintb").onclick = () => { $("#mhint").innerHTML = `<div class="hint-word">${esc(s.ayat[a - 1].a.split(" ")[0])} …</div>`; $("#mhintb").disabled = true; };
+      $("#mrev").onclick = () => {
+        $("#mhid").innerHTML = `<div class="text">${ayahHtml(s, a)}</div>`;
+        $("#macts").innerHTML = `
+          <button class="btn coral" id="mmiss">${I.x} I made a mistake</button>
+          <button class="btn" id="mok">${I.check} I got it right</button>`;
+        $("#mok").onclick = async () => {
+          const k = known(); k.add(a); count = REPS;
+          await saveSurah(s.n, { known: [...k].sort((x, y) => x - y), memo: { ...(pr().memo || {}), [a]: REPS }, status: pr().status === "memorized" ? "memorized" : "learning", updatedAt: Date.now() });
+          chime(true); done();
+        };
+        $("#mmiss").onclick = () => { count = Math.max(0, REPS - 6); saveCount(); toast("No problem — 5 more repeats, then try again 💪"); draw(); if (auto) playAyah(); };
+      };
+    }
+    $("#mpick").onchange = e => pickAyah(+e.target.value);
+  }
+
+  function done() {
+    const k = known(), next = range.find(i => i > a && !k.has(i)) || range.find(i => !k.has(i));
+    body.innerHTML = `
+      <div class="card memo-card">
+        <div class="confetti">🎉</div>
+        <h2 style="margin:4px 0">Ayah ${a} is saved in your heart!</h2>
+        <p class="muted">${k.size} of ${N} ayahs of ${esc(s.en)} done.</p>
+        <div class="row" style="justify-content:center;margin-top:8px">
+          ${next ? `<button class="btn gold big" id="mnext">Next: ayah ${next} →</button>` : ""}
+          ${!next ? `<a class="btn gold big" href="#/kid/${kid.id}/s/${s.n}/test">${I.eye} Test the whole surah</a>` : ""}
+          <a class="btn ghost" href="#/kid/${kid.id}">All surahs</a>
+        </div>
+        ${next && k.size > 1 ? `<p class="small muted" style="margin-top:12px">Tip: before the next ayah, say all the ayahs you've saved so far in a row.</p>` : ""}
+        ${!next ? `<p class="small muted" style="margin-top:12px">You saved every ayah! Test the whole surah to mark it memorized.</p>` : ""}
+      </div>`;
+    $("#mnext") && ($("#mnext").onclick = () => { pickAyah(next); if (auto) playAyah(); });
+  }
+  draw();
 }
 
 /* ---- Listen & learn ---- */
@@ -878,6 +978,8 @@ async function renderParent(sub) {
       <div class="card" id="kidsCard"></div>
       <div class="card">
         <h3>Settings</h3>
+        <label class="small muted" style="font-weight:800">Repeats per ayah in Memorize (last one is from memory)</label>
+        <select id="reps" style="margin-bottom:10px">${[5, 10, 15, 20, 25, 30, 40].map(n => `<option value="${n}" ${n === (settings.reps || 20) ? "selected" : ""}>${n} times</option>`).join("")}</select>
         <label class="small muted" style="font-weight:800">Default reciter</label>
         <select id="defrec">${RECITERS.map(r => `<option value="${r.id}" ${r.id === reciter() ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
         <div class="row" style="margin-top:14px">
@@ -890,6 +992,7 @@ async function renderParent(sub) {
     </div>`;
 
   $("#lockb").onclick = () => { sessionStorage.removeItem("hifz:unlocked"); location.hash = "#/"; };
+  $("#reps").onchange = async e => { settings.reps = +e.target.value; await store.saveSettings({ reps: settings.reps }); toast(`Each ayah: ${settings.reps} repeats`); };
   $("#defrec").onchange = async e => { settings.reciter = e.target.value; await store.saveSettings({ reciter: settings.reciter }); toast("Reciter saved"); };
   $("#notif").onclick = async () => {
     if (!("Notification" in window)) return toast("This browser can't show notifications. On iPhone/iPad, first tap Share → Add to Home Screen, then open it from there.");

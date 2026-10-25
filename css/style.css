@@ -248,3 +248,16 @@ tr:last-child td { border-bottom: 0; }
 .modal-back { position: fixed; inset: 0; background: rgba(20,30,25,.55); display: grid; place-items: center; z-index: 60; padding: 16px; animation: fade .2s; }
 .modal { background: var(--paper); border-radius: 24px; padding: 26px 22px; max-width: 420px; width: 100%; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,.3); border: 3px solid var(--gold); }
 @keyframes fade { from { opacity: 0 } }
+
+/* Memorize */
+.memo-card { text-align: center; }
+.memo-ring { display: flex; justify-content: center; margin-top: 4px; }
+.memo-ayah { margin: 14px auto; padding: 14px 10px; border-radius: 16px; background: #fffaf0; border: 2px solid var(--gold-soft); transition: background .2s; }
+.memo-ayah.playing { background: var(--gold-soft); border-color: var(--gold); }
+.memo-ayah .text { font-family: var(--quran); direction: rtl; font-size: clamp(1.8rem, 6vw, 2.6rem); line-height: 2.1; }
+.memo-go { min-width: 240px; font-size: 1.3rem; padding: 18px 30px; }
+.memo-dots { display: flex; gap: 5px; justify-content: center; flex-wrap: wrap; margin-top: 14px; }
+.memo-dots i { width: 14px; height: 14px; border-radius: 50%; background: var(--sand-2); display: block; }
+.memo-dots i.ok { background: var(--green-2); }
+.memo-dots i.cur { background: var(--gold); transform: scale(1.25); }
+.memo-dots i.last { box-shadow: 0 0 0 2px var(--gold); }
