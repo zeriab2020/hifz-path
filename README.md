@@ -3,6 +3,9 @@
 A Juz' 'Amma (surahs 78–114) memorization app for kids, with a parent dashboard.
 
 **For the kids**
+- **Memorize**: each ayah is repeated 20 times with the reciter (number is adjustable); the 20th time is from memory with the words hidden. A mistake adds 5 more repeats.
+- **🎤 Check me**: the browser's Arabic speech recognition listens while they recite and marks each word ✓ or ✗. It catches skipped or wrong words, not tajweed. Works in Chrome and Safari; the voice is sent to Google/Apple to be transcribed. Can be turned off in Parent → Settings.
+- **Daily alert**: at a time you choose, the app chimes and reminds them to do their daily review (default 30 minutes) of every surah they've saved.
 - **Listen & learn**: ayah-by-ayah recitation with repeat (1–10×), loop, speed, choice of reciter, and a "hide words" memory mode. Tick ✓ each ayah once they can say it alone.
 - **Test myself**: recite each ayah from memory, reveal, and mark got it / missed it. Passing the whole surah (90%+) marks it memorized.
 - **Record**: record the whole surah and save it for the parent to hear.
@@ -13,6 +16,8 @@ A Juz' 'Amma (surahs 78–114) memorization app for kids, with a parent dashboar
 - Listen to recordings, give 1–3 stars, leave a note the child sees.
 - "I tested it" button: when they recite to you in person, mark the surah checked (and memorized).
 - Add/rename/remove children, pick the default reciter.
+
+Fonts: Amiri Quran, Amiri and Nunito are bundled in `fonts/` (SIL Open Font License).
 
 Text: Uthmani script from the Noble Qur'an Encyclopedia (quranenc.com), via the `quran-json` package (CC-BY-4.0); ayah counts verified (564 ayahs). English meanings: Saheeh International. Audio streams from everyayah.com.
 

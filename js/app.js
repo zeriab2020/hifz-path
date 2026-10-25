@@ -134,7 +134,7 @@ const player = {
 /* ============ Router ============ */
 window.addEventListener("hashchange", route);
 async function route() {
-  player.stop(true); recorder.cancel(); dailyTimer.stop();
+  player.stop(true); recorder.cancel(); dailyTimer.stop(); checker.cancel();
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   const app = $("#app");
   try {
@@ -266,6 +266,130 @@ function renderSurah(s, tab) {
   ({ memorize: renderMemorize, learn: renderLearn, test: renderTest, record: renderRecord }[tab] || renderMemorize)(s);
 }
 
+/* ---- Check me: speech recognition word checker ---- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const AR_MARKS = /[ؐ-ًؚ-ٰٟۖ-ۭـ]/g;
+function normAr(w) {
+  return w.replace(AR_MARKS, "").replace(/[ٱأإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
+    .replace(/ؤ/g, "و").replace(/ئ/g, "ي").replace(/[^ء-ي]/g, "");
+}
+const skel = w => normAr(w).replace(/[اء]/g, "");
+function lev(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+function sameWord(exp, heard) {
+  const a = normAr(exp), b = normAr(heard);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const x = skel(exp), y = skel(heard);
+  if (x === y) return true;
+  const tol = l => (l <= 3 ? 0 : l <= 6 ? 1 : 2);
+  return lev(a, b) <= tol(Math.max(a.length, b.length)) && lev(x, y) <= tol(Math.max(x.length, y.length));
+}
+// Fuzzy LCS alignment: which expected words were heard, in order.
+function alignWords(expected, heard) {
+  const n = expected.length, m = heard.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++)
+    dp[i][j] = sameWord(expected[i - 1], heard[j - 1]) ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+  const ok = new Array(n).fill(false);
+  for (let i = n, j = m; i > 0 && j > 0;) {
+    if (sameWord(expected[i - 1], heard[j - 1]) && dp[i][j] === dp[i - 1][j - 1] + 1) { ok[i - 1] = true; i--; j--; }
+    else if (dp[i - 1][j] >= dp[i][j - 1]) i--; else j--;
+  }
+  return ok;
+}
+function expectedWords(s, from, to) {
+  const out = [];
+  for (let a = from; a <= to; a++) s.ayat[a - 1].a.split(/\s+/).forEach(w => { if (normAr(w)) out.push({ a, w }); });
+  return out;
+}
+const checker = {
+  rec: null, on: false, text: "",
+  start(h) {
+    this.cancel(); this.text = ""; this.on = true;
+    const r = this.rec = new SR();
+    r.lang = "ar-SA"; r.continuous = true; r.interimResults = true; r.maxAlternatives = 1;
+    r.onresult = e => {
+      let interim = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) this.text += " " + t; else interim += " " + t;
+      }
+      h.onHeard?.((this.text + interim).trim());
+    };
+    r.onerror = e => {
+      if (e.error === "no-speech" || e.error === "aborted") return;
+      this.on = false; h.onError?.(e.error);
+    };
+    r.onend = () => {                        // browsers stop after pauses; keep listening until "Done"
+      if (this.on) { try { r.start(); return; } catch {} }
+      if (this.rec === r) { this.rec = null; h.onEnd?.(this.text.trim()); }
+    };
+    try { r.start(); } catch (e) { this.on = false; h.onError?.(e.message); }
+  },
+  stop() { this.on = false; try { this.rec?.stop(); } catch {} },
+  cancel() { this.on = false; if (this.rec) { this.rec.onend = null; this.rec.onresult = null; try { this.rec.abort(); } catch {} } this.rec = null; },
+};
+const checkEnabled = () => settings.checkMe !== false;
+
+// Renders a "Check me" control into el. Results are drawn into resultEl (defaults inside el).
+// onDone({pass, got, total, frac}) is called after they finish reciting.
+function checkPanel(el, s, from, to, { onDone, resultEl, label = "Check me", small = false } = {}) {
+  if (!el || !checkEnabled()) return;
+  if (!SR) { el.innerHTML = `<p class="small muted">🎤 “Check me” works in Chrome (Android, laptop) or Safari on iPhone/iPad.</p>`; return; }
+  const exp = expectedWords(s, from, to), words = exp.map(x => x.w);
+  el.innerHTML = `<div class="check ${small ? "small" : ""}">
+      <button class="btn check-btn ${small ? "sm" : ""}" data-check>🎤 ${label}</button>
+      <div class="check-status small muted"></div>
+      <div class="heard" dir="rtl"></div>
+      ${resultEl ? "" : `<div class="check-out"></div>`}
+    </div>`;
+  const btn = $("[data-check]", el), status = $(".check-status", el), heard = $(".heard", el);
+  const out = resultEl || $(".check-out", el);
+  const show = ok => {
+    let html = "", cur = 0;
+    exp.forEach((x, i) => {
+      if (x.a !== cur) { if (cur) html += ` <span class="ayah-no">${arNum(cur)}</span> `; cur = x.a; }
+      html += `<span class="cw ${ok[i] ? "ok" : "miss"}">${esc(x.w)}</span> `;
+    });
+    html += `<span class="ayah-no">${arNum(cur)}</span>`;
+    const got = ok.filter(Boolean).length, total = ok.length, frac = got / total, pass = frac >= 0.9;
+    out.innerHTML = `<div class="check-words">${html}</div>
+      <div class="check-score ${pass ? "pass" : "fail"}">${pass ? (got === total ? "✓ Every word right! MashaAllah" : `✓ ${got} of ${total} words — great!`) : `${total - got} word${total - got > 1 ? "s" : ""} missed (in red) — ${got} of ${total} right`}</div>`;
+    return { pass, got, total, frac };
+  };
+  const finish = text => {
+    btn.innerHTML = `🎤 Check again`; btn.classList.remove("live");
+    if (!text) { status.textContent = "I didn't hear anything. Tap and recite clearly, close to the device."; return; }
+    status.textContent = "";
+    onDone?.(show(alignWords(words, text.split(/\s+/))));
+  };
+  btn.onclick = () => {
+    if (checker.on) { status.textContent = "Checking…"; return checker.stop(); }
+    player.stop(true); heard.textContent = ""; out.innerHTML = "";
+    btn.innerHTML = `${I.stop} Done reciting`; btn.classList.add("live");
+    status.textContent = "Listening… recite now";
+    checker.start({
+      onHeard: t => {
+        heard.textContent = t;
+        if (alignWords(words, t.split(/\s+/)).every(Boolean)) checker.stop();   // all words heard: finish early
+      },
+      onEnd: finish,
+      onError: err => {
+        btn.innerHTML = `🎤 ${label}`; btn.classList.remove("live");
+        status.textContent = err === "not-allowed" || err === "service-not-allowed"
+          ? "Microphone or speech recognition is blocked. Allow it in the browser settings and try again."
+          : err === "network" ? "“Check me” needs an internet connection." : `Couldn't listen (${err}). Try again.`;
+      },
+    });
+  };
+}
+
 /* ---- Memorize: repeat each ayah N times (default 20); the last time is from memory ---- */
 function renderMemorize(s) {
   const kid = kidById(S.kidId), N = s.ayat.length, REPS = settings.reps || 20;
@@ -302,6 +426,7 @@ function renderMemorize(s) {
           <p class="small muted" style="margin:0">Repeat ${REPS} is from your head, with the words hidden.</p>
           <div class="memo-ayah"><div class="text">${ayahHtml(s, a)}</div></div>
           <button class="btn big memo-go" id="said">${I.check} I said it</button>
+          <div id="mcheck" style="margin-top:10px"></div>
           <div class="row" style="justify-content:center;margin-top:12px">
             <button class="btn secondary sm" id="mlisten">${I.play} Listen</button>
             <label class="toggle"><input type="checkbox" id="mauto" ${auto ? "checked" : ""}> Play the reciter before each repeat</label>
@@ -314,6 +439,9 @@ function renderMemorize(s) {
         draw(); if (auto) playAyah();
       };
       $("#mlisten").onclick = () => playAyah();
+      checkPanel($("#mcheck"), s, a, a, { small: true, onDone: r => {
+        if (r.pass) { toast("✓ Correct! That counts as a repeat"); setTimeout(() => $("#said")?.click(), 1100); }
+      } });
       $("#mauto").onchange = e => { auto = S.memoAuto = e.target.checked; };
     } else {
       body.innerHTML = `
@@ -324,6 +452,7 @@ function renderMemorize(s) {
           <p class="muted">Say ayah ${a} out loud without looking. Then check yourself.</p>
           ${a > 1 ? `<div class="small muted">Before it:</div><div class="prev-ayah">${ayahHtml(s, a - 1)}</div>` : ""}
           <div class="hidden-ayah" id="mhid"><div><div style="font-size:1.3rem;font-weight:900">Ayah ${a}</div><div id="mhint"></div></div></div>
+          <div id="mcheck2" style="margin-bottom:10px"></div>
           <div class="row" style="justify-content:center" id="macts">
             <button class="btn ghost" id="mhintb">Hint: first word</button>
             <button class="btn gold big" id="mrev">${I.eye} I said it — show me</button>
@@ -335,17 +464,27 @@ function renderMemorize(s) {
         $("#macts").innerHTML = `
           <button class="btn coral" id="mmiss">${I.x} I made a mistake</button>
           <button class="btn" id="mok">${I.check} I got it right</button>`;
-        $("#mok").onclick = async () => {
-          const k = known(); k.add(a); count = REPS;
-          await saveSurah(s.n, { known: [...k].sort((x, y) => x - y), memo: { ...(pr().memo || {}), [a]: REPS }, status: pr().status === "memorized" ? "memorized" : "learning", updatedAt: Date.now() });
-          chime(true); done();
-        };
-        $("#mmiss").onclick = () => { count = Math.max(0, REPS - 6); saveCount(); toast("No problem — 5 more repeats, then try again 💪"); draw(); if (auto) playAyah(); };
+        $("#mok").onclick = gotIt;
+        $("#mmiss").onclick = missed;
       };
+      checkPanel($("#mcheck2"), s, a, a, { resultEl: $("#mhid"), label: "Check me from memory", onDone: r => {
+        if (r.pass) { setTimeout(gotIt, 1300); return; }
+        $("#macts").innerHTML = `
+          <button class="btn coral" id="mmiss">${I.repeat} 5 more repeats</button>
+          <button class="btn ghost sm" id="mok">The app heard me wrong — I got it</button>`;
+        $("#mok").onclick = gotIt; $("#mmiss").onclick = missed;
+      } });
     }
     $("#mpick").onchange = e => pickAyah(+e.target.value);
   }
 
+  async function gotIt() {
+    checker.cancel();
+    const k = known(); k.add(a); count = REPS;
+    await saveSurah(s.n, { known: [...k].sort((x, y) => x - y), memo: { ...(pr().memo || {}), [a]: REPS }, status: pr().status === "memorized" ? "memorized" : "learning", updatedAt: Date.now() });
+    chime(true); done();
+  }
+  function missed() { checker.cancel(); count = Math.max(0, REPS - 6); saveCount(); toast("No problem — 5 more repeats, then try again 💪"); draw(); if (auto) playAyah(); }
   function done() {
     const k = known(), next = range.find(i => i > a && !k.has(i)) || range.find(i => !k.has(i));
     body.innerHTML = `
@@ -503,6 +642,7 @@ function renderTest(s) {
           <div class="test-progress">${dots}</div>
           ${i > 1 ? `<div class="small muted">Before it:</div><div class="prev-ayah">${ayahHtml(s, i - 1)}</div>` : `<div class="prev-ayah">${BASMALA}</div>`}
           <div class="hidden-ayah" id="hid"><div><div style="font-size:1.3rem;font-weight:900">Ayah ${i}</div><div class="muted small">Say it out loud now</div><div id="hint"></div></div></div>
+          <div id="tcheck" style="margin-bottom:10px"></div>
           <div class="row" style="justify-content:center" id="acts">
             <button class="btn ghost" id="hintb">Hint: first word</button>
             <button class="btn" id="rev">${I.eye} Show ayah</button>
@@ -520,8 +660,17 @@ function renderTest(s) {
         $("#ok").onclick = () => next(true);
         $("#miss").onclick = () => next(false);
       };
+      checkPanel($("#tcheck"), s, i, i, { resultEl: $("#hid"), onDone: r => {
+        if (r.pass) { setTimeout(() => next(true), 1300); return; }
+        $("#acts").innerHTML = `
+          <button class="btn ghost sm" id="lis">${I.play} Listen</button>
+          <button class="btn coral" id="miss">${I.x} I missed it</button>
+          <button class="btn ghost sm" id="ok">The app heard me wrong — I got it</button>`;
+        $("#lis").onclick = () => player.play({ s: s.n, from: i, to: i, repeat: 1, rate: 1 });
+        $("#ok").onclick = () => next(true); $("#miss").onclick = () => next(false);
+      } });
     };
-    const next = ok => { player.stop(true); results[i] = ok; i++; i > to ? finish() : step(); };
+    const next = ok => { player.stop(true); checker.cancel(); results[i] = ok; i++; i > to ? finish() : step(); };
     const finish = async () => {
       const keys = range.slice(from - 1, to);
       const got = keys.filter(n => results[n]).length, total = keys.length;
@@ -826,7 +975,7 @@ function renderDaily() {
         ${s.ayat.map((_, k) => `<div class="ayah" id="ay${k + 1}" style="grid-template-columns:1fr"><div class="text" data-peek>${ayahHtml(s, k + 1)}</div></div>`).join("")}
       </div>
       <div class="card" style="margin-top:12px;text-align:center">
-        ${reviewMode ? `<h3>How did it go?</h3>
+        ${reviewMode ? `<div id="dcheck" style="margin-bottom:12px"></div><h3>How did it go?</h3>
           <div class="row" style="justify-content:center">
             <button class="btn" data-rate="smooth">😊 Smooth</button>
             <button class="btn gold" data-rate="some">😐 A few mistakes</button>
@@ -844,8 +993,13 @@ function renderDaily() {
         a => { $$(".ayah.playing").forEach(x => x.classList.remove("playing")); a > 0 && $("#ay" + a)?.classList.add("playing"); },
         () => { $("#dlisten") && ($("#dlisten").innerHTML = `${I.play} Listen first`); $$(".ayah.playing").forEach(x => x.classList.remove("playing")); });
     };
+    checkPanel($("#dcheck"), s, 1, s.ayat.length, { label: "Check me — recite the whole surah", onDone: r => {
+      const pick = r.frac >= 0.95 ? "smooth" : r.frac >= 0.8 ? "some" : "hard";
+      $$("[data-rate]").forEach(b => b.classList.toggle("suggest", b.dataset.rate === pick));
+      $("#dcheck").scrollIntoView({ block: "start", behavior: "smooth" });
+    } });
     $$("[data-rate]").forEach(b => b.onclick = async () => {
-      player.stop(true);
+      player.stop(true); checker.cancel();
       await saveSurah(s.n, applyDaily(S.progress[s.n] || {}, b.dataset.rate));
       if (b.dataset.rate === "hard") toast(`We'll review ${s.en} again tomorrow 💪`);
       idx++;
@@ -980,6 +1134,7 @@ async function renderParent(sub) {
         <h3>Settings</h3>
         <label class="small muted" style="font-weight:800">Repeats per ayah in Memorize (last one is from memory)</label>
         <select id="reps" style="margin-bottom:10px">${[5, 10, 15, 20, 25, 30, 40].map(n => `<option value="${n}" ${n === (settings.reps || 20) ? "selected" : ""}>${n} times</option>`).join("")}</select>
+        <label class="toggle" style="margin-bottom:10px"><input type="checkbox" id="checkme" ${checkEnabled() ? "checked" : ""}> 🎤 Show “Check me” (the browser's speech recognition listens and marks words; voice goes to Google/Apple to be transcribed)</label>
         <label class="small muted" style="font-weight:800">Default reciter</label>
         <select id="defrec">${RECITERS.map(r => `<option value="${r.id}" ${r.id === reciter() ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
         <div class="row" style="margin-top:14px">
@@ -993,6 +1148,7 @@ async function renderParent(sub) {
 
   $("#lockb").onclick = () => { sessionStorage.removeItem("hifz:unlocked"); location.hash = "#/"; };
   $("#reps").onchange = async e => { settings.reps = +e.target.value; await store.saveSettings({ reps: settings.reps }); toast(`Each ayah: ${settings.reps} repeats`); };
+  $("#checkme").onchange = async e => { settings.checkMe = e.target.checked; await store.saveSettings({ checkMe: settings.checkMe }); toast(settings.checkMe ? "Check me is on" : "Check me is off"); };
   $("#defrec").onchange = async e => { settings.reciter = e.target.value; await store.saveSettings({ reciter: settings.reciter }); toast("Reciter saved"); };
   $("#notif").onclick = async () => {
     if (!("Notification" in window)) return toast("This browser can't show notifications. On iPhone/iPad, first tap Share → Add to Home Screen, then open it from there.");

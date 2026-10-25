@@ -1,3 +1,11 @@
+/* Fonts bundled locally (SIL Open Font License, see fonts/) */
+@font-face { font-family: "Amiri Quran"; font-style: normal; font-weight: 400; font-display: swap; src: url("../fonts/amiri-quran-arabic-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Amiri"; font-style: normal; font-weight: 400; font-display: swap; src: url("../fonts/amiri-arabic-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Amiri"; font-style: normal; font-weight: 700; font-display: swap; src: url("../fonts/amiri-arabic-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Nunito"; font-style: normal; font-weight: 500; font-display: swap; src: url("../fonts/nunito-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Nunito"; font-style: normal; font-weight: 700; font-display: swap; src: url("../fonts/nunito-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Nunito"; font-style: normal; font-weight: 800; font-display: swap; src: url("../fonts/nunito-latin-800-normal.woff2") format("woff2"); }
+@font-face { font-family: "Nunito"; font-style: normal; font-weight: 900; font-display: swap; src: url("../fonts/nunito-latin-900-normal.woff2") format("woff2"); }
 :root {
   --sand: #f6efe2;
   --sand-2: #efe4cf;
@@ -261,3 +269,18 @@ tr:last-child td { border-bottom: 0; }
 .memo-dots i.ok { background: var(--green-2); }
 .memo-dots i.cur { background: var(--gold); transform: scale(1.25); }
 .memo-dots i.last { box-shadow: 0 0 0 2px var(--gold); }
+
+/* Check me */
+.check { text-align: center; }
+.check-btn { background: var(--blue); box-shadow: 0 3px 0 #1f4b6d; }
+.check-btn.live { background: var(--coral); box-shadow: 0 3px 0 #8a3726; animation: pulse 1.3s infinite; }
+.check-status { margin-top: 6px; min-height: 1.2em; }
+.heard { font-family: var(--ar); color: var(--ink-2); font-size: 1.15rem; min-height: 1.2em; margin-top: 4px; }
+.check-words { font-family: var(--quran); direction: rtl; font-size: clamp(1.5rem, 4.6vw, 2.1rem); line-height: 2.2; text-align: center; }
+.cw.ok { color: var(--green); }
+.cw.miss { color: var(--coral); background: var(--coral-soft); border-radius: 8px; padding: 0 .12em; }
+.check-score { font-weight: 900; margin-top: 6px; }
+.check-score.pass { color: var(--green); }
+.check-score.fail { color: var(--coral); }
+.btn.suggest { outline: 4px solid var(--blue); outline-offset: 3px; }
+.btn.suggest::after { content: "suggested"; font-size: .7rem; background: var(--blue); color: #fff; border-radius: 6px; padding: 1px 6px; margin-left: 6px; }
