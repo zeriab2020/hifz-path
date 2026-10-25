@@ -1,0 +1,13 @@
+{
+  "name": "Hifz Path · مسار الحفظ",
+  "short_name": "Hifz Path",
+  "description": "Juz' 'Amma memorization for kids",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6efe2",
+  "theme_color": "#0f5b4b",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

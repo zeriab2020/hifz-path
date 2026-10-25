@@ -1,0 +1,63 @@
+# Hifz Path · مسار الحفظ
+
+A Juz' 'Amma (surahs 78–114) memorization app for kids, with a parent dashboard.
+
+**For the kids**
+- **Listen & learn**: ayah-by-ayah recitation with repeat (1–10×), loop, speed, choice of reciter, and a "hide words" memory mode. Tick ✓ each ayah once they can say it alone.
+- **Test myself**: recite each ayah from memory, reveal, and mark got it / missed it. Passing the whole surah (90%+) marks it memorized.
+- **Record**: record the whole surah and save it for the parent to hear.
+- **Review**: memorized surahs come back for review after 1, 3, 7, 14, 30, 60, 90 days. A weak review resets the schedule to tomorrow.
+
+**For the parent** (PIN-protected)
+- Per child: surahs memorized, ayahs learned, streak, reviews due, last test score, next review date for every surah.
+- Listen to recordings, give 1–3 stars, leave a note the child sees.
+- "I tested it" button: when they recite to you in person, mark the surah checked (and memorized).
+- Add/rename/remove children, pick the default reciter.
+
+Text: Uthmani script from the Noble Qur'an Encyclopedia (quranenc.com), via the `quran-json` package (CC-BY-4.0); ayah counts verified (564 ayahs). English meanings: Saheeh International. Audio streams from everyayah.com.
+
+---
+
+## 1. Put it on GitHub Pages
+
+1. Create a new repo, e.g. `zeriab2020/hifz-path`.
+2. Upload everything in this folder (keep the `css/`, `js/`, `data/` folders).
+3. Repo **Settings → Pages → Source: Deploy from a branch → `main` / root → Save**.
+4. After a minute it's live at `https://zeriab2020.github.io/hifz-path/`.
+
+It works right away in **this-device-only** mode (saved in the browser). Do step 2 to see progress from your phone.
+
+## 2. Turn on sync (free Firebase, ~10 minutes)
+
+1. Go to <https://console.firebase.google.com> → **Create a project** (name it `hifz-path`; Analytics not needed). It stays on the free **Spark** plan; no card needed.
+2. **Build → Authentication → Get started → Sign-in method → Google → Enable → Save.**
+   Then **Authentication → Settings → Authorized domains → Add domain → `zeriab2020.github.io`.**
+3. **Build → Firestore Database → Create database** → pick a location near you (e.g. `nam5`) → **Start in production mode**.
+   Open the **Rules** tab, paste the contents of `firestore.rules` from this repo, **Publish**.
+4. **Project settings (gear) → General → Your apps → Web (`</>`)** → register app (no hosting). Copy the `firebaseConfig` values into `js/firebase-config.js`:
+   ```js
+   export const firebaseConfig = {
+     apiKey: "AIza...",
+     authDomain: "hifz-path-xxxx.firebaseapp.com",
+     projectId: "hifz-path-xxxx",
+     appId: "1:...:web:..."
+   };
+   ```
+   Commit the change. (These web keys are meant to be public; the Firestore rules are what protect the data.)
+5. Open the site on the kids' device → **Sign in with Google** (your account) → open **Parent**, set a PIN, add the children.
+   Sign in with the **same Google account** on your phone to see everything live.
+
+Recordings are compressed (~32 kbps) and stored in Firestore itself, so you don't need Cloud Storage (which now requires the paid Blaze plan). A 3-minute recitation is about 0.7 MB; the free tier holds 1 GB.
+
+> Note: anything recorded in this-device-only mode stays on that device. Turn on sync before the kids start if you want everything in one place.
+
+## Files
+
+| File | What it is |
+|---|---|
+| `index.html` | App shell |
+| `js/app.js` | Screens: kid picker, surah path, learn / test / record, parent dashboard |
+| `js/store.js` | Saving: browser storage, or Firebase when configured |
+| `js/firebase-config.js` | Your Firebase keys (empty = this device only) |
+| `data/juz-amma.js` | Surahs 78–114 text + meanings |
+| `firestore.rules` | Security rules to paste into Firebase |
