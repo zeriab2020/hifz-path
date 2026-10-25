@@ -3,6 +3,7 @@
 A Juz' 'Amma (surahs 78–114) memorization app for kids, with a parent dashboard.
 
 **For the kids**
+- **Recite with Hudhud 🐦** (the first screen when they open a surah): the whole surah is shown, Hudhud the hoopoe listens as they recite, and each word lights up green as they say it. Tap any word to hear it (word-by-word audio from quran.com). If they get stuck, the next word glows, and after a few more seconds Hudhud says it for them. If they say a wrong word, Hudhud asks them to try again. Each surah earns 1–3 stars; reciting it from memory (words hidden) with 3 stars earns its sticker in their sticker book. Works in Chrome and Safari; elsewhere this screen falls back to the self-check test.
 - **Memorize**: each ayah is repeated 20 times with the reciter (number is adjustable); the 20th time is from memory with the words hidden. A mistake adds 5 more repeats.
 - **🎤 Check me**: the browser's Arabic speech recognition listens while they recite and marks each word ✓ or ✗. It catches skipped or wrong words, not tajweed. Works in Chrome and Safari; the voice is sent to Google/Apple to be transcribed. Can be turned off in Parent → Settings.
 - **Daily alert**: at a time you choose, the app chimes and reminds them to do their daily review (default 30 minutes) of every surah they've saved.

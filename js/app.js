@@ -203,12 +203,12 @@ function tile(s, p, kid) {
   const cls = st.due ? "due" : st.status;
   const pct = st.status === "memorized" ? 100 : Math.round(st.known / st.total * 100);
   const chip = st.due ? `<span class="chip due">Review</span>` : st.status === "memorized" ? `<span class="chip memorized">${I.check} Memorized</span>` : st.status === "learning" ? `<span class="chip learning">${st.known}/${st.total}</span>` : `<span>${st.total} ayahs</span>`;
-  return `<a class="surah-tile ${cls}" href="#/kid/${kid.id}/s/${s.n}/${st.due ? "test" : st.status === "memorized" ? "learn" : "memorize"}" style="text-decoration:none;color:inherit">
+  return `<a class="surah-tile ${cls}" href="#/kid/${kid.id}/s/${s.n}/${liveSupported() ? "recite" : st.due ? "test" : "memorize"}" style="text-decoration:none;color:inherit">
     <span class="num">${s.n}</span>
     <span class="sn-ar">${esc(s.ar)}</span>
     <span class="sn-en">${esc(s.en)}</span>
     <span class="mini"><i style="width:${pct}%"></i></span>
-    <span class="meta">${chip}${st.approved ? `<span title="Checked by parent" style="color:var(--gold)">${I.star}</span>` : ""}</span>
+    <span class="meta">${chip}${st.bestStars ? starRow(st.bestStars) : ""}${st.approved ? `<span title="Checked by parent" style="color:var(--gold)">${I.star}</span>` : ""}</span>
   </a>`;
 }
 function renderKidHome() {
@@ -228,6 +228,7 @@ function renderKidHome() {
       <div class="stat"><div class="v">${st.ayat}</div><div class="l">Ayahs learned</div></div>
       <div class="stat"><div class="v" style="color:var(--amber)">${I.flame} ${streak(kid)}</div><div class="l">Day streak</div></div>
       <div class="stat"><div class="v" style="color:${st.due ? "var(--coral)" : "var(--green)"}">${st.due}</div><div class="l">Reviews today</div></div>
+      <div class="stat"><div class="v" style="color:var(--gold)">★ ${kid.stars || 0}</div><div class="l">Stars from Hudhud</div></div>
     </div>
     <div class="bar" style="margin-top:12px" title="${Math.round(st.ayat / TOTAL_AYAT * 100)}% of Juz' 'Amma"><i style="width:${st.ayat / TOTAL_AYAT * 100}%"></i></div>
     ${dailyCard(kid, p)}
@@ -235,7 +236,12 @@ function renderKidHome() {
     ${learning.length ? `<h2>📖 Keep learning</h2><div class="path">${learning.map(s => tile(s, p, kid)).join("")}</div>` : ""}
     ${!learning.length && nextNew ? `<h2>✨ Start your next surah</h2><div class="path">${tile(nextNew, p, kid)}</div>` : ""}
     <h2>🌙 All surahs</h2>
-    <div class="path">${ORDER.map(s => tile(s, p, kid)).join("")}</div>`;
+    <div class="path">${ORDER.map(s => tile(s, p, kid)).join("")}</div>
+    <h2>📒 My sticker book <span class="small muted">${ORDER.filter(s => p[s.n]?.sticker).length} / ${SURAHS.length}</span></h2>
+    <p class="small muted" style="margin-top:-6px">Recite a surah from memory with Hudhud and get 3 stars to earn its sticker.</p>
+    <div class="stickers">${ORDER.map(s => p[s.n]?.sticker
+      ? `<div class="sticker got" title="${esc(s.en)}"><span>${STICKERS[s.n]}</span><b>${esc(s.en)}</b></div>`
+      : `<div class="sticker" title="${esc(s.en)}"><span>?</span><b>${esc(s.en)}</b></div>`).join("")}</div>`;
 }
 
 /* ============ Surah page ============ */
@@ -258,18 +264,23 @@ function renderSurah(s, tab) {
       ${st.status === "memorized" && st.nextReview ? `<span class="small muted">Next review: ${relDays(st.nextReview)}</span>` : ""}</div>
     </div>
     <div class="tabs" role="tablist">
-      ${[["memorize", I.repeat, "Memorize"], ["learn", I.book, "Listen"], ["test", I.eye, "Test"], ["record", I.mic, "Record"]].map(([k, ic, l]) =>
-        `<button role="tab" aria-selected="${tab === k}" data-tab="${k}">${ic}<span>${l}</span></button>`).join("")}
+      ${[["recite", "🐦", liveSupported() ? "Recite" : "Test"], ["memorize", I.repeat, "Memorize"], ["learn", I.book, "Listen"], ["record", I.mic, "Record"]].map(([k, ic, l]) =>
+        `<button role="tab" aria-selected="${tab === k || (tab === "test" && k === "recite")}" data-tab="${k}">${ic}<span>${l}</span></button>`).join("")}
     </div>
     <div id="tabbody"></div>`;
   $$(".tabs button").forEach(b => b.onclick = () => { history.replaceState(null, "", `#/kid/${kid.id}/s/${s.n}/${b.dataset.tab}`); route(); });
-  ({ memorize: renderMemorize, learn: renderLearn, test: renderTest, record: renderRecord }[tab] || renderMemorize)(s);
+  ({ recite: renderRecite, test: renderRecite, memorize: renderMemorize, learn: renderLearn, record: renderRecord }[tab] || renderRecite)(s);
 }
 
 /* ---- Check me: speech recognition word checker ---- */
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const AR_MARKS = /[ؐ-ًؚ-ٰٟۖ-ۭـ]/g;
+const _norm = new Map();
 function normAr(w) {
+  let v = _norm.get(w); if (v !== undefined) return v;
+  v = normArRaw(w); if (_norm.size > 5000) _norm.clear(); _norm.set(w, v); return v;
+}
+function normArRaw(w) {
   return w.replace(AR_MARKS, "").replace(/[ٱأإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
     .replace(/ؤ/g, "و").replace(/ئ/g, "ي").replace(/[^ء-ي]/g, "");
 }
@@ -297,9 +308,11 @@ function alignWords(expected, heard) {
   for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++)
     dp[i][j] = sameWord(expected[i - 1], heard[j - 1]) ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
   const ok = new Array(n).fill(false);
+  // Backtrack preferring the EARLIEST expected word for each heard word (so "يلد" never jumps ahead to "يولد").
   for (let i = n, j = m; i > 0 && j > 0;) {
-    if (sameWord(expected[i - 1], heard[j - 1]) && dp[i][j] === dp[i - 1][j - 1] + 1) { ok[i - 1] = true; i--; j--; }
-    else if (dp[i - 1][j] >= dp[i][j - 1]) i--; else j--;
+    if (dp[i - 1][j] === dp[i][j]) i--;
+    else if (sameWord(expected[i - 1], heard[j - 1]) && dp[i][j] === dp[i - 1][j - 1] + 1) { ok[i - 1] = true; i--; j--; }
+    else j--;
   }
   return ok;
 }
@@ -388,6 +401,244 @@ function checkPanel(el, s, from, to, { onDone, resultEl, label = "Check me", sma
       },
     });
   };
+}
+
+/* ============ Hudhud: Ello-style live recitation companion ============ */
+const HUDHUD_SVG = `<svg viewBox="0 0 140 130" aria-hidden="true">
+  <g class="hh-crest">
+    <path d="M52 34 C40 10 46 4 50 2 C54 8 58 20 60 32Z" fill="#e8913a"/><path d="M50 2 C48 6 47 9 47 12 L52 10Z" fill="#2b2420"/>
+    <path d="M60 31 C56 8 62 0 67 0 C69 8 68 20 66 31Z" fill="#f0a24a"/><path d="M67 0 C64 3 63 6 63 9 L68 8Z" fill="#2b2420"/>
+    <path d="M67 32 C72 9 80 4 85 6 C83 15 77 25 72 34Z" fill="#e8913a"/><path d="M85 6 C81 7 79 10 78 12 L83 13Z" fill="#2b2420"/>
+    <path d="M73 36 C86 18 95 16 99 20 C94 28 86 34 78 39Z" fill="#f0a24a"/><path d="M99 20 C95 19 92 21 91 23 L96 25Z" fill="#2b2420"/>
+  </g>
+  <ellipse cx="62" cy="92" rx="34" ry="28" fill="#eba765"/>
+  <g class="hh-wing"><path d="M36 82 C44 70 70 72 78 86 C72 104 46 108 34 98Z" fill="#fdf6ec"/>
+    <path d="M38 80 L48 104 M48 76 L58 106 M58 75 L66 105 M68 78 L74 100" stroke="#2b2420" stroke-width="6" stroke-linecap="round"/></g>
+  <circle cx="66" cy="52" r="23" fill="#f1b672"/>
+  <path class="hh-beak" d="M86 50 C104 48 120 54 132 66 C118 60 102 58 86 58Z" fill="#3b2a20"/>
+  <circle cx="72" cy="47" r="8" fill="#fff"/><circle class="hh-pupil" cx="74" cy="47" r="4.6" fill="#2b2420"/><circle cx="75.6" cy="45.2" r="1.6" fill="#fff"/>
+  <ellipse cx="58" cy="60" rx="5" ry="3.2" fill="#f28b82" opacity=".55"/>
+  <path d="M54 118 l-4 8 M54 118 l2 9 M70 118 l-2 9 M70 118 l5 8" stroke="#8a5a2b" stroke-width="3" stroke-linecap="round"/>
+  <g class="hh-waves"><path d="M44 40 q-8 8 0 16" fill="none" stroke="#2f6f9f" stroke-width="3" stroke-linecap="round"/><path d="M36 34 q-13 14 0 28" fill="none" stroke="#2f6f9f" stroke-width="3" stroke-linecap="round" opacity=".6"/></g>
+</svg>`;
+const wordAudioUrl = (s, a, w) => `https://audio.qurancdn.com/wbw/${pad3(s)}_${pad3(a)}_${pad3(w)}.mp3`;
+const PRAISE = ["MashaAllah!", "Keep going!", "Beautiful!", "You're doing great!", "Nice and clear!", "SubhanAllah, well done!"];
+const STICKERS = { 78: "⛰️", 79: "🌟", 80: "🍇", 81: "🌠", 82: "🌌", 83: "⚖️", 84: "🌗", 85: "✨", 86: "⭐", 87: "🌿", 88: "🐪", 89: "🌄", 90: "🛤️", 91: "☀️", 92: "🌙", 93: "🌅", 94: "💚", 95: "🫒", 96: "📖", 97: "🌃", 98: "💎", 99: "🌍", 100: "🐎", 101: "🦋", 102: "⏳", 103: "⌛", 104: "💰", 105: "🐘", 106: "🧳", 107: "🤲", 108: "🌊", 109: "🕊️", 110: "🏆", 111: "🪵", 112: "💫", 113: "🌤️", 114: "🛡️" };
+const liveSupported = () => !!SR && checkEnabled();
+
+let wordAudio = null;
+function playWord(s, a, w, onEnd) {
+  try { wordAudio?.pause(); } catch {}
+  const au = wordAudio = new Audio(wordAudioUrl(s, a, w));
+  let fell = false;
+  const fallback = () => { if (fell) return; fell = true; player.play({ s, from: a, to: a, repeat: 1, rate: 1 }, null, () => onEnd?.()); };
+  au.onended = () => onEnd?.(); au.onerror = fallback;
+  au.play().catch(e => { if (e.name !== "AbortError") fallback(); });
+}
+
+// Live recitation with word-by-word highlighting.
+// opts: { from, to, hidden, onFinish(result) }
+function liveRecite(el, s, opts) {
+  const from = opts.from || 1, to = opts.to || s.ayat.length;
+  let hidden = !!opts.hidden;
+  const ayat = [];
+  for (let a = from; a <= to; a++) ayat.push({ a, words: s.ayat[a - 1].a.split(/\s+/).filter(w => normAr(w)), ok: [], helped: new Set(), tried: new Set(), done: false });
+  let ci = 0, base = 0, offset = 0, frontier = 0, listening = false, lastProgress = Date.now(), hint = 0, mistakeAt = -1, praiseAt = 0, finished = false, totalHelps = 0;
+  const cur = () => ayat[ci];
+
+  el.innerHTML = `
+    <div class="hh">
+      <div class="hh-stage">
+        <div class="hh-bird">${HUDHUD_SVG}</div>
+        <div class="hh-bubble" id="hhBubble">Bismillah! Tap the microphone and recite. I'll listen to every word.</div>
+      </div>
+      <div class="hh-controls">
+        <button class="btn big hh-mic" id="hhMic">${I.mic} Start reciting</button>
+        <button class="btn secondary sm" id="hhHear" hidden>🔊 Hear this ayah</button>
+        <button class="btn ghost sm" id="hhSaid" hidden>${I.check} I said it</button>
+        <label class="toggle"><input type="checkbox" id="hhHide" ${hidden ? "checked" : ""}> Hide words (from memory)</label>
+      </div>
+      <p class="small muted hh-tip">Tap any word to hear how it's said.</p>
+      <div class="mushaf hh-text ${hidden ? "hh-hidden" : ""}" id="hhText">
+        ${from === 1 ? `<div class="basmala">${BASMALA}</div>` : ""}
+        ${ayat.map((y, k) => `<div class="hh-ayah" id="hha${k}">${y.words.map((w, i) => `<span class="hw" data-k="${k}" data-i="${i}">${esc(w)}</span>`).join(" ")} <span class="ayah-no">${arNum(y.a)}</span></div>`).join("")}
+      </div>
+    </div>`;
+  const bird = $(".hh-bird", el), bubble = $("#hhBubble", el), mic = $("#hhMic", el), hearB = $("#hhHear", el), saidB = $("#hhSaid", el);
+  const say = (t, mood) => { bubble.textContent = t; bird.className = "hh-bird " + (mood || (listening ? "listening" : "")); bubble.classList.remove("pop"); void bubble.offsetWidth; bubble.classList.add("pop"); };
+
+  function paint() {
+    ayat.forEach((y, k) => {
+      const box = $("#hha" + k, el); box.classList.toggle("current", k === ci && !finished); box.classList.toggle("done", y.done);
+      $$(".hw", box).forEach((sp, i) => {
+        let c = "hw";
+        if (y.done || k < ci) c += y.ok[i] ? (y.helped.has(i) ? " helped" : " ok") : " skip";
+        else if (k === ci) {
+          if (i < frontier) c += y.ok[i] ? (y.helped.has(i) ? " helped" : " ok") : " skip";
+          else if (i === frontier) c += " next" + (hint >= 1 ? " hint" : "") + (mistakeAt === i ? " try" : "");
+        }
+        if (sp.className !== c) { const wasOk = /\b(ok|helped)\b/.test(sp.className); sp.className = c; if (!wasOk && /\b(ok|helped)\b/.test(c)) sp.classList.add("popin"); }
+      });
+    });
+  }
+  function scrollToCur() { $("#hha" + ci, el)?.scrollIntoView({ block: "center", behavior: "smooth" }); }
+
+  function onHeard(text) {
+    if (finished) return;
+    const hw = text.split(/\s+/).filter(Boolean), seg = hw.slice(offset), y = cur();
+    const rest = y.words.slice(base);
+    const n = rest.length, m = seg.length;
+    const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++)
+      dp[i][j] = sameWord(rest[i - 1], seg[j - 1]) ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+    const ok = new Array(n).fill(false); let lastJ = -1;
+    for (let i = n, j = m; i > 0 && j > 0;) {
+      if (dp[i - 1][j] === dp[i][j]) i--;
+      else if (sameWord(rest[i - 1], seg[j - 1]) && dp[i][j] === dp[i - 1][j - 1] + 1) { ok[i - 1] = true; if (lastJ < 0) lastJ = j - 1; i--; j--; }
+      else j--;
+    }
+    let f = 0; ok.forEach((v, i) => { if (v) f = i + 1; });
+    for (let i = 0; i < n; i++) y.ok[base + i] = ok[i] || (base + i < frontier && y.ok[base + i]);
+    const newFrontier = base + f;
+    if (newFrontier > frontier) {
+      frontier = newFrontier; lastProgress = Date.now(); hint = 0; mistakeAt = -1; hearB.hidden = true; saidB.hidden = true;
+      if (frontier - praiseAt >= 6 && frontier < y.words.length) { praiseAt = frontier; say(PRAISE[Math.floor(Math.random() * PRAISE.length)], "happy"); setTimeout(() => listening && (bird.className = "hh-bird listening"), 900); }
+    }
+    const extra = m - 1 - lastJ;                 // words heard after the last match
+    if (extra >= 2 && frontier < y.words.length && mistakeAt !== frontier) {
+      mistakeAt = frontier; y.tried.add(frontier);
+      say("Hmm, try that word again 🙂 Tap it to hear it.", "think");
+    }
+    paint();
+    if (frontier >= y.words.length) ayahDone(offset + lastJ + 1);
+  }
+
+  function ayahDone(newOffset) {
+    const y = cur(); y.done = true;
+    const missed = y.words.length - y.ok.filter(Boolean).length;
+    chime(true);
+    ci++; base = 0; frontier = 0; offset = newOffset; hint = 0; mistakeAt = -1; praiseAt = 0; lastProgress = Date.now(); hearB.hidden = true; saidB.hidden = true;
+    if (ci >= ayat.length) return finish();
+    say(missed ? `Ayah ${y.a} done! You skipped ${missed} word${missed > 1 ? "s" : ""} (in orange). Now ayah ${cur().a}.` : `Ayah ${y.a} — perfect! ⭐ Now ayah ${cur().a}.`, "happy");
+    setTimeout(() => listening && !finished && (bird.className = "hh-bird listening"), 1000);
+    paint(); scrollToCur();
+  }
+
+  function startListening() {
+    listening = true; base = frontier; offset = 0; lastProgress = Date.now();
+    mic.innerHTML = `${I.stop} Pause`; mic.classList.add("live"); bird.className = "hh-bird listening";
+    checker.start({
+      onHeard,
+      onEnd: () => {},
+      onError: err => {
+        stopListening();
+        say(err === "not-allowed" || err === "service-not-allowed" ? "I can't hear you. Please allow the microphone in the browser settings." : err === "network" ? "I need the internet to listen. Check the connection." : "Oops, I couldn't listen. Tap the microphone to try again.", "think");
+      },
+    });
+  }
+  function stopListening() { listening = false; checker.cancel(); mic.innerHTML = `${I.mic} Keep reciting`; mic.classList.remove("live"); bird.className = "hh-bird"; }
+
+  // Stuck helper
+  const stuckIv = setInterval(() => {
+    if (!el.isConnected) { clearInterval(stuckIv); return; }
+    if (!listening || finished) return;
+    const dt = Date.now() - lastProgress;
+    if (dt > 4500 && hint < 1) { hint = 1; say(hidden ? "Take your time… the next word is glowing ✨" : "Need help? Tap the glowing word to hear it ✨", "think"); if (hidden) $(".hw.next", el)?.classList.add("peek"); paint(); }
+    else if (dt > 9000 && hint < 2) {
+      hint = 2; const y = cur(); y.helped.add(frontier); totalHelps++;
+      say("Let's say it together! Listen… then you say it 👂", "think");
+      hearB.hidden = false; saidB.hidden = false;
+      pauseAndPlay(cb => playWord(s.n, y.a, frontier + 1, cb));
+    }
+  }, 500);
+
+  function pauseAndPlay(play) {
+    const was = listening; if (was) { listening = false; checker.cancel(); }
+    play(() => { if (was && !finished && el.isConnected) { say("Now you say it!", "listening"); startListening(); } });
+  }
+
+  mic.onclick = () => listening ? (stopListening(), say("Paused. Tap the microphone when you're ready.")) : (startListening(), say(frontier || ci ? "I'm listening… carry on!" : "I'm listening… Bismillah!", "listening"));
+  hearB.onclick = () => { const y = cur(); y.helped.add(frontier); pauseAndPlay(cb => player.play({ s: s.n, from: y.a, to: y.a, repeat: 1, rate: 1 }, null, cb)); };
+  saidB.onclick = () => {           // fallback when the recognizer keeps mishearing
+    const y = cur(); for (let i = frontier; i < y.words.length; i++) { y.ok[i] = true; y.helped.add(i); }
+    totalHelps++; frontier = y.words.length; paint(); ayahDone(9999);
+    if (listening) { checker.cancel(); startListening(); }
+  };
+  $("#hhHide", el).onchange = e => { hidden = e.target.checked; $("#hhText", el).classList.toggle("hh-hidden", hidden); };
+  $("#hhText", el).onclick = e => {
+    const w = e.target.closest(".hw"); if (!w) return;
+    const k = +w.dataset.k, i = +w.dataset.i, y = ayat[k];
+    if (k === ci && i >= frontier) { y.helped.add(i); }
+    w.classList.add("speaking"); pauseAndPlay(cb => playWord(s.n, y.a, i + 1, () => { w.classList.remove("speaking"); cb(); }));
+  };
+
+  function finish() {
+    finished = true; listening = false; checker.cancel(); clearInterval(stuckIv);
+    mic.hidden = true; hearB.hidden = true; saidB.hidden = true;
+    const total = ayat.reduce((t, y) => t + y.words.length, 0);
+    const got = ayat.reduce((t, y) => t + y.words.filter((_, i) => y.ok[i] && !y.helped.has(i)).length, 0);
+    const helps = ayat.reduce((t, y) => t + y.helped.size, 0);
+    const frac = got / total;
+    const stars = frac >= 0.95 && helps === 0 ? 3 : frac >= 0.85 ? 2 : 1;
+    paint(); $("#hhText", el).classList.remove("hh-hidden");
+    say(stars === 3 ? "You did it — every word! MashaAllah! 🎉" : stars === 2 ? "Great job! Just a few words to polish ⭐" : "Well done for finishing! Let's practice the orange words 💪", "happy");
+    chime(true);
+    const perAyah = new Map(ayat.map(y => [y.a, y.words.every((_, i) => y.ok[i] && !y.helped.has(i))]));
+    opts.onFinish?.({ got, total, frac, helps, stars, hidden, perAyah, full: from === 1 && to === s.ayat.length });
+  }
+  paint();
+  return { stop() { finished = true; checker.cancel(); clearInterval(stuckIv); } };
+}
+
+function starRow(n, of = 3) { return `<span class="stars">${Array.from({ length: of }, (_, i) => `<span class="${i < n ? "on" : ""}">★</span>`).join("")}</span>`; }
+
+// Save a finished Hudhud session; returns {outcome, sticker}
+async function saveRecite(s, r) {
+  const kid = kidById(S.kidId), prev = S.progress[s.n] || {};
+  let data = { lastRecited: Date.now(), bestStars: Math.max(prev.bestStars || 0, r.stars), updatedAt: Date.now() }, outcome = null, sticker = false;
+  if (r.hidden && r.full) {
+    const res = applyTest(prev, [...r.perAyah.values()].filter(Boolean).length, r.perAyah.size, true, r.perAyah);
+    data = { ...res.out, ...data }; outcome = res.outcome;
+    if (r.stars === 3 && !prev.sticker) { data.sticker = Date.now(); sticker = true; }
+  } else if (!r.hidden) {
+    const known = new Set(prev.known || []);
+    if (prev.status !== "memorized") data.status = "learning";
+    data.known = [...known].sort((a, b) => a - b);
+  }
+  await saveSurah(s.n, data);
+  kid.stars = (kid.stars || 0) + r.stars;
+  await store.saveKid({ id: kid.id, stars: kid.stars });
+  return { outcome, sticker };
+}
+
+function renderRecite(s) {
+  if (!liveSupported()) return renderTest(s);
+  const kid = kidById(S.kidId), body = $("#tabbody"), st = surahState(S.progress, s);
+  const startHidden = S.reciteHidden?.n === s.n ? S.reciteHidden.v : false;   // a surah always opens with its words showing
+  body.innerHTML = `<div id="hhWrap"></div><div id="hhResult"></div>`;
+  liveRecite($("#hhWrap"), s, {
+    hidden: startHidden,
+    onFinish: async r => {
+      const { outcome, sticker } = await saveRecite(s, r);
+      const msg = outcome === "memorized" ? "Surah memorized! It's now in your daily review." : outcome === "reviewed" ? `Review done! Next one ${relDays(S.progress[s.n].nextReview)}.` : outcome === "weak" ? "Let's practice it again tomorrow." : r.hidden ? "" : "Next time, try it with the words hidden!";
+      $("#hhResult").innerHTML = `
+        <div class="card" style="text-align:center;margin-top:12px">
+          <div class="big-stars">${starRow(r.stars)}</div>
+          <h2 style="margin:6px 0">${r.got} of ${r.total} words${r.helps ? ` · ${r.helps} with help` : ""}</h2>
+          ${msg ? `<p class="muted">${msg}</p>` : ""}
+          ${sticker ? `<div class="sticker-new"><span>${STICKERS[s.n]}</span><div><b>New sticker!</b><br><span class="small muted">${esc(s.en)} is in your sticker book</span></div></div>` : ""}
+          <div class="row" style="justify-content:center;margin-top:10px">
+            <button class="btn gold" id="again">↻ Recite again</button>
+            ${!r.hidden ? `<button class="btn secondary" id="againHidden">${I.eye} Try from memory</button>` : ""}
+            <a class="btn ghost" href="#/kid/${kid.id}/s/${s.n}/record">${I.mic} Record for parent</a>
+          </div>
+        </div>`;
+      $("#hhResult").scrollIntoView({ behavior: "smooth", block: "center" });
+      $("#again").onclick = () => { S.reciteHidden = { n: s.n, v: r.hidden }; renderRecite(s); };
+      $("#againHidden") && ($("#againHidden").onclick = () => { S.reciteHidden = { n: s.n, v: true }; renderRecite(s); });
+    },
+  });
+  $("#hhHide").addEventListener("change", e => { S.reciteHidden = { n: s.n, v: e.target.checked }; });
 }
 
 /* ---- Memorize: repeat each ayah N times (default 20); the last time is from memory ---- */
@@ -966,6 +1217,7 @@ function renderDaily() {
         </div>
         <p class="muted" style="margin:10px 0">${reviewMode ? "Recite the whole surah out loud from memory. Tap an ayah to peek if you get stuck." : "You don't have a memorized surah yet, so spend today's time learning this one."}</p>
         <div class="row">
+          ${reviewMode && liveSupported() ? `<button class="btn gold" id="dhud">🐦 Recite with Hudhud</button>` : ""}
           <button class="btn secondary sm" id="dlisten">${I.play} Listen first</button>
           <label class="toggle"><input type="checkbox" id="dshow" ${show ? "checked" : ""}> Show the words</label>
         </div>
@@ -993,11 +1245,23 @@ function renderDaily() {
         a => { $$(".ayah.playing").forEach(x => x.classList.remove("playing")); a > 0 && $("#ay" + a)?.classList.add("playing"); },
         () => { $("#dlisten") && ($("#dlisten").innerHTML = `${I.play} Listen first`); $$(".ayah.playing").forEach(x => x.classList.remove("playing")); });
     };
-    checkPanel($("#dcheck"), s, 1, s.ayat.length, { label: "Check me — recite the whole surah", onDone: r => {
+    if (!liveSupported()) checkPanel($("#dcheck"), s, 1, s.ayat.length, { label: "Check me — recite the whole surah", onDone: r => {
       const pick = r.frac >= 0.95 ? "smooth" : r.frac >= 0.8 ? "some" : "hard";
       $$("[data-rate]").forEach(b => b.classList.toggle("suggest", b.dataset.rate === pick));
       $("#dcheck").scrollIntoView({ block: "start", behavior: "smooth" });
     } });
+    $("#dhud") && ($("#dhud").onclick = () => {
+      player.stop(true);
+      const box = document.createElement("div"); $("#dmushaf").replaceWith(box);
+      $("#dhud").remove(); $("#dshow").closest("label").remove();
+      liveRecite(box, s, { hidden: !show, onFinish: async r => {
+        kid.stars = (kid.stars || 0) + r.stars; await store.saveKid({ id: kid.id, stars: kid.stars });
+        const pick = r.stars === 3 ? "smooth" : r.stars === 2 ? "some" : "hard";
+        $$("[data-rate]").forEach(b => b.classList.toggle("suggest", b.dataset.rate === pick));
+        $("#dcheck").innerHTML = `<div class="big-stars">${starRow(r.stars)}</div><p class="muted" style="margin:4px 0">${r.got} of ${r.total} words${r.helps ? ` · ${r.helps} with help` : ""}</p>`;
+        $("#dcheck").scrollIntoView({ block: "center", behavior: "smooth" });
+      } });
+    });
     $$("[data-rate]").forEach(b => b.onclick = async () => {
       player.stop(true); checker.cancel();
       await saveSurah(s.n, applyDaily(S.progress[s.n] || {}, b.dataset.rate));
@@ -1134,7 +1398,7 @@ async function renderParent(sub) {
         <h3>Settings</h3>
         <label class="small muted" style="font-weight:800">Repeats per ayah in Memorize (last one is from memory)</label>
         <select id="reps" style="margin-bottom:10px">${[5, 10, 15, 20, 25, 30, 40].map(n => `<option value="${n}" ${n === (settings.reps || 20) ? "selected" : ""}>${n} times</option>`).join("")}</select>
-        <label class="toggle" style="margin-bottom:10px"><input type="checkbox" id="checkme" ${checkEnabled() ? "checked" : ""}> 🎤 Show “Check me” (the browser's speech recognition listens and marks words; voice goes to Google/Apple to be transcribed)</label>
+        <label class="toggle" style="margin-bottom:10px"><input type="checkbox" id="checkme" ${checkEnabled() ? "checked" : ""}> 🐦 Hudhud listens (the browser's speech recognition hears their recitation and lights up each word; voice goes to Google/Apple to be transcribed). Off = self-check only.</label>
         <label class="small muted" style="font-weight:800">Default reciter</label>
         <select id="defrec">${RECITERS.map(r => `<option value="${r.id}" ${r.id === reciter() ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select>
         <div class="row" style="margin-top:14px">
@@ -1184,6 +1448,7 @@ function kidPanel(kid, p) {
       <td>${chip}</td>
       <td>${x.status === "memorized" ? `${x.total}/${x.total}` : `${x.known}/${x.total}`}</td>
       <td>${x.lastScore != null ? x.lastScore + "%" : "—"} <span class="muted small">${x.lastTest ? fmtDate(x.lastTest) : ""}</span></td>
+      <td>${x.bestStars ? starRow(x.bestStars) : "—"}</td>
       <td>${x.lastRecited ? fmtDate(x.lastRecited) : "—"}</td>
       <td>${x.status === "memorized" && x.nextReview ? relDays(x.nextReview) : "—"}</td>
       <td>${x.approved ? `<button class="btn ghost sm" data-unapprove="${s.n}" title="Remove check">${I.star} ${fmtDate(x.approvedAt)}</button>` : `<button class="btn secondary sm" data-approve="${s.n}">${I.check} I tested it</button>`}</td>
@@ -1205,10 +1470,11 @@ function kidPanel(kid, p) {
         return `<div class="wday ${f >= 1 ? "met" : ""}" title="${Math.floor(sec / 60)} min"><div class="wbar"><i style="height:${Math.max(f * 100, sec ? 6 : 0)}%"></i></div><b>${Math.floor(sec / 60)}</b><span>${new Date(t).toLocaleDateString(undefined, { weekday: "short" })}</span></div>`;
       }).join("")}</div>
     </div>
+    <div class="small muted" style="margin-top:8px">★ ${kid.stars || 0} stars from Hudhud · 📒 ${ORDER.filter(s => p[s.n]?.sticker).length} stickers</div>
     <div class="bar" style="margin:12px 0 4px"><i style="width:${st.ayat / TOTAL_AYAT * 100}%"></i></div>
     <p class="small muted">${Math.round(st.ayat / TOTAL_AYAT * 100)}% of Juz' 'Amma. “I tested it” = you heard them recite it to you; it also marks the surah memorized and starts its review schedule.</p>
     <div class="table-wrap" style="max-height:520px"><table id="ptable">
-      <thead><tr><th>#</th><th>Surah</th><th>Status</th><th>Ayahs</th><th>Last test</th><th>Last recited</th><th>Next review</th><th>Parent check</th><th></th></tr></thead>
+      <thead><tr><th>#</th><th>Surah</th><th>Status</th><th>Ayahs</th><th>Last test</th><th>Best ★</th><th>Last recited</th><th>Next review</th><th>Parent check</th><th></th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
 }
 function wireKidPanel(kid, p) {
