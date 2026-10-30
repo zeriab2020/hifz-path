@@ -1,10 +1,11 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Each family's data lives under /families/{their Google account uid}.
-    // Only that signed-in account can read or write it.
-    match /families/{uid}/{document=**} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+    // Each family's data lives under /families/{familyCode}/...
+    // The family code is a long random secret that only travels inside your setup link.
+    // Devices sign in anonymously; nobody can list families, so the code can't be discovered.
+    match /families/{fid}/{col}/{document=**} {
+      allow read, write: if request.auth != null && fid.size() >= 20;
     }
   }
 }

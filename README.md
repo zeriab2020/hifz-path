@@ -33,14 +33,15 @@ Text: Uthmani script from the Noble Qur'an Encyclopedia (quranenc.com), via the 
 
 It works right away in **this-device-only** mode (saved in the browser). Do step 2 to see progress from your phone.
 
-## 2. Turn on sync (free Firebase, ~10 minutes)
+## 2. Turn on sync across devices (free Firebase, ~10 minutes)
+
+Without this, each device keeps its own progress. With it, every device opened with your setup link shares the same progress, stars, stickers and recordings. No one needs a Google account on the kids' devices.
 
 1. Go to <https://console.firebase.google.com> → **Create a project** (name it `hifz-path`; Analytics not needed). It stays on the free **Spark** plan; no card needed.
-2. **Build → Authentication → Get started → Sign-in method → Google → Enable → Save.**
-   Then **Authentication → Settings → Authorized domains → Add domain → `zeriab2020.github.io`.**
+2. **Build → Authentication → Get started → Sign-in method → Anonymous → Enable → Save.**
 3. **Build → Firestore Database → Create database** → pick a location near you (e.g. `nam5`) → **Start in production mode**.
    Open the **Rules** tab, paste the contents of `firestore.rules` from this repo, **Publish**.
-4. **Project settings (gear) → General → Your apps → Web (`</>`)** → register app (no hosting). Copy the `firebaseConfig` values into `js/firebase-config.js`:
+4. **Project settings (gear) → General → Your apps → Web (`</>`)** → register app (no hosting). Copy the `firebaseConfig` values into `js/firebase-config.js` and commit:
    ```js
    export const firebaseConfig = {
      apiKey: "AIza...",
@@ -49,13 +50,13 @@ It works right away in **this-device-only** mode (saved in the browser). Do step
      appId: "1:...:web:..."
    };
    ```
-   Commit the change. (These web keys are meant to be public; the Firestore rules are what protect the data.)
-5. Open the site on the kids' device → **Sign in with Google** (your account) → open **Parent**, set a PIN, add the children.
-   Sign in with the **same Google account** on your phone to see everything live.
+   (These web keys are meant to be public. Your family's data is protected by a long secret family code that only exists inside your setup link.)
+5. On **your** device, open the app → **I'm the parent → Set up our family**. Anything already saved on that device (children, progress, recordings) is copied in.
+6. **Parent → 📲 Share with kids** → send the link to every other device (kids' devices and your own phone). Opening it connects that device.
 
-Recordings are compressed (~32 kbps) and stored in Firestore itself, so you don't need Cloud Storage (which now requires the paid Blaze plan). A 3-minute recitation is about 0.7 MB; the free tier holds 1 GB.
+Keep the setup link private: anyone who has it can see and change your family's progress.
 
-> Note: anything recorded in this-device-only mode stays on that device. Turn on sync before the kids start if you want everything in one place.
+Recordings are compressed (~32 kbps) and stored in Firestore itself, so you don't need Cloud Storage (which requires the paid Blaze plan). A 3-minute recitation is about 0.7 MB; the free tier holds 1 GB.
 
 ## Files
 

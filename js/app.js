@@ -1,4 +1,4 @@
-import { createStore } from "./store.js";
+import { createStore, migrateLocal } from "./store.js";
 
 /* ============ Data & constants ============ */
 const SURAHS = window.JUZ_AMMA;                       // [{n, ar, en, meaning, ayat:[{a, e}]}] for 78..114
@@ -138,8 +138,8 @@ async function route() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   const app = $("#app");
   try {
-    if (store.mode === "cloud" && !store.user) return renderSignIn();
     if (parts[0] === "join") return await importSetup(parts.slice(1).join("/"));
+    if (store.mode === "cloud" && !store.ready) return renderSignIn();
     if (parts[0] === "parent") return await renderParent(parts[1]);
     if (parts[0] === "kid" && kidById(parts[1])) {
       S.kidId = parts[1];
@@ -160,20 +160,41 @@ function setNav() {
     + `<a class="pill" href="#/parent">${I.lock}<span>Parent</span></a>`;
 }
 
-/* ============ Sign-in (cloud mode) ============ */
+/* ============ Family setup (sync mode) ============ */
 function renderSignIn() {
   $("#topnav").innerHTML = "";
   $("#app").innerHTML = `
-    <div class="hero"><div class="bismillah">${BASMALA}</div></div>
-    <div class="card pin-box">
-      <h1>Welcome</h1>
-      <p class="muted">A parent signs in once on each device. After that, the kids just tap their name, and everything they do syncs to your phone.</p>
-      <button class="btn big" id="gsign">Sign in with Google</button>
-      <p class="small muted" id="err"></p>
-    </div>`;
-  $("#gsign").onclick = async () => {
-    try { await store.signIn(); await boot(); } catch (e) { $("#err").textContent = e.message || e; }
+    <div class="hero"><div class="bismillah">${BASMALA}</div><h1>Welcome to Hifz Path</h1></div>
+    <div class="grid2" style="max-width:760px;margin:0 auto">
+      <div class="card" style="text-align:center">
+        <div style="font-size:2.4rem">👧👦</div>
+        <h3>I'm a child</h3>
+        <p class="muted small">Open the setup link your parent sent you, or paste it here:</p>
+        <input type="text" id="pasteLink" placeholder="Paste the setup link">
+        <button class="btn" id="pasteGo" style="margin-top:8px;width:100%">Join my family</button>
+      </div>
+      <div class="card" style="text-align:center">
+        <div style="font-size:2.4rem">🔐</div>
+        <h3>I'm the parent</h3>
+        <p class="muted small">Do this <b>once</b>, on your own device. Then share the setup link with every other device.</p>
+        <button class="btn gold" id="newFam" style="width:100%">Set up our family</button>
+        <p class="small muted" style="margin-bottom:0">Already set up on another device? Open the setup link here instead.</p>
+      </div>
+    </div>
+    <p class="small muted" id="err" style="text-align:center"></p>`;
+  $("#pasteGo").onclick = () => { const v = $("#pasteLink").value.trim(), i = v.indexOf("#/join/");
+    if (i < 0) return $("#err").textContent = "That isn't a setup link. Ask your parent to send it again.";
+    location.hash = v.slice(i); };
+  $("#newFam").onclick = async () => {
+    if (!confirm("Create a NEW family? Only do this once. If you already set up Hifz Path on another device, open its setup link here instead.")) return;
+    store.createFamily(); await afterJoin(); location.hash = "#/parent";
   };
+}
+async function afterJoin() {
+  $("#app").innerHTML = `<div class="loading" id="mig">Connecting…</div>`;
+  try { await migrateLocal(store, t => { const m = $("#mig"); if (m) m.textContent = t; }); }
+  catch (e) { console.error(e); toast("Some old progress couldn't be copied: " + (e.message || e)); }
+  [settings, kids] = await Promise.all([store.getSettings(), store.listKids()]);
 }
 
 /* ============ Kid picker ============ */
@@ -1333,7 +1354,7 @@ function showAlertModal(list) {
 // goal isn't met, it alerts right away. Each child is alerted once per day per device
 // (the in-app pop-up shows again whenever the app is reopened until the goal is met).
 async function checkReminders(fromOpen) {
-  if (!kids.length || (store.mode === "cloud" && !store.user)) return;
+  if (!kids.length || (store.mode === "cloud" && !store.ready)) return;
   const due = kids.filter(reminderDue);
   if (!due.length) return;
   if (S.kidId && !due.some(k => k.id === S.kidId) ) return;
@@ -1414,7 +1435,7 @@ async function renderParent(sub) {
         <div class="row" style="margin-top:14px">
           <button class="btn ghost sm" id="chpin">Change PIN</button>
           <button class="btn secondary sm" id="notif">🔔 ${"Notification" in window && Notification.permission === "granted" ? "Notifications on (test)" : "Turn on alerts on this device"}</button>
-          ${store.mode === "cloud" ? `<button class="btn ghost sm" id="signout">Sign out of this device</button>` : ""}
+          ${store.mode === "cloud" ? `<button class="btn ghost sm" id="signout">Disconnect this device</button>` : ""}
         </div>
         <p class="small muted" style="margin-bottom:0">Text: Uthmani script from the Noble Qur'an Encyclopedia (quranenc.com). Audio streamed from everyayah.com.</p>
       </div>
@@ -1437,13 +1458,15 @@ async function renderParent(sub) {
     renderParent(sub);
   };
   $("#chpin").onclick = async () => { settings.pinHash = null; await store.saveSettings({ pinHash: null }); renderParent(sub); };
-  $("#signout") && ($("#signout").onclick = async () => { await store.signOut(); sessionStorage.removeItem("hifz:unlocked"); renderSignIn(); });
+  $("#signout") && ($("#signout").onclick = () => {
+    if (!confirm("Disconnect this device from your family? Nothing is deleted; open the setup link again to reconnect.")) return;
+    store.leaveFamily(); sessionStorage.removeItem("hifz:unlocked"); kids = []; settings = {}; location.hash = "#/"; renderSignIn(); });
   recordingList($("#precs"), recs.slice(0, 40), { parent: true });
   kidsCard();
   if (kid) wireKidPanel(kid, progress);
 }
 function syncBanner() {
-  if (store.mode === "cloud") return `<div class="banner">☁️ Syncing as <b>${esc(store.user?.email || "")}</b>. Progress and recordings show up on every device you sign in on.</div>`;
+  if (store.mode === "cloud") return `<div class="banner">☁️ <b>Synced.</b> Every device opened with your setup link shares the same progress, stars and recordings. Tap <b>📲 Share with kids</b> to connect another device.</div>`;
   if (store.cloudError) return `<div class="banner warn">Firebase couldn't start (${esc(store.cloudError)}). Saving on this device only. Check js/firebase-config.js and the README.</div>`;
   return `<div class="banner warn">Saving on <b>this device only</b>. To see progress from your phone, add your Firebase keys (README, “Turn on sync”).</div>`;
 }
@@ -1560,7 +1583,7 @@ const unb64url = str => new TextDecoder().decode(Uint8Array.from(atob(str.replac
 function setupLink(onlyId) {
   const list = kids.filter(k => !onlyId || k.id === onlyId).map(k => ({ id: k.id, name: k.name, avatar: k.avatar, color: k.color,
     goalMin: k.goalMin, reminderTime: k.reminderTime, reminderOn: k.reminderOn }));
-  const data = { v: 1, kids: list, set: { reciter: settings.reciter, reps: settings.reps, checkMe: settings.checkMe, pinHash: settings.pinHash } };
+  const data = { v: 1, f: store.mode === "cloud" ? store.familyId : undefined, kids: list, set: { reciter: settings.reciter, reps: settings.reps, checkMe: settings.checkMe, pinHash: settings.pinHash } };
   return location.origin + location.pathname + "#/join/" + b64url(JSON.stringify(data));
 }
 function showShare() {
@@ -1568,7 +1591,9 @@ function showShare() {
   const opts = [["", "All children"], ...kids.map(k => [k.id, `${k.avatar || "⭐"} Only ${k.name}`])];
   box.innerHTML = `<div class="card" style="margin-top:12px;border:2px solid var(--gold)">
     <h3>📲 Send the app to your kids</h3>
-    <p class="small muted" style="margin-top:0">Send this link to each child's phone or tablet. Opening it adds them to that device, ready to start. (Progress is saved on the device they use.)</p>
+    <p class="small muted" style="margin-top:0">${store.mode === "cloud"
+      ? "Send this link to every phone, tablet or laptop — the kids' and your own. Opening it connects that device to your family, so progress, stars and recordings are the same everywhere. Keep it private: anyone with the link can see your family's progress."
+      : "Send this link to each child's phone or tablet. Opening it adds them to that device, ready to start. (Progress is saved on the device they use — turn on sync to share it across devices.)"}</p>
     <div class="row"><select id="shareWho" style="width:auto">${opts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select></div>
     <div class="row" style="margin-top:10px">
       <input type="text" id="shareUrl" readonly style="flex:1;min-width:200px;font-size:.85rem">
@@ -1587,10 +1612,17 @@ function showShare() {
 async function importSetup(code) {
   let data;
   try { data = JSON.parse(unb64url(code)); } catch { toast("That setup link looks broken. Ask your parent to send it again."); location.hash = "#/"; return; }
+  if (store.mode === "cloud") {
+    if (!data.f) { toast("This is an old setup link. Ask your parent for a new one from the Parent page."); history.replaceState(null, "", location.pathname + "#/"); return store.ready ? route() : renderSignIn(); }
+    const switching = store.ready && store.familyId !== data.f;
+    if (switching && !confirm("This device is connected to a different family. Switch to the family in this link?")) { history.replaceState(null, "", location.pathname + "#/"); return route(); }
+    store.joinFamily(data.f); await afterJoin();
+  }
   let added = 0;
   for (const k of data.kids || []) {
     if (!k?.id || !k?.name) continue;
     const ex = kidById(k.id);
+    if (ex && store.mode === "cloud") continue;          // the family's own data is newer than the link
     const kid = { ...k, ...(ex ? {} : { createdAt: Date.now(), days: [] }) };
     await store.saveKid(kid);
     if (ex) Object.assign(ex, k); else { kids.push(kid); added++; }
@@ -1600,14 +1632,15 @@ async function importSetup(code) {
   history.replaceState(null, "", location.pathname + "#/");
   const names = (data.kids || []).map(k => k.name).join(" & ");
   if ((data.kids || []).length === 1) { location.hash = `#/kid/${data.kids[0].id}`; } else route();
-  toast(added ? `Welcome, ${names}! 🌙` : `${names} updated on this device`);
+  toast(store.mode === "cloud" ? `Connected! ${names ? names + "'s" : "Your"} progress syncs on every device 🌙` : added ? `Welcome, ${names}! 🌙` : `${names} updated on this device`);
 }
 
 /* ============ Boot ============ */
 async function boot() {
   if (!store) store = await createStore();
-  if (store.mode === "cloud" && !store.user) return renderSignIn();
-  [settings, kids] = await Promise.all([store.getSettings(), store.listKids()]);
+  const joining = location.hash.startsWith("#/join/");
+  if (store.mode === "cloud" && !store.ready && !joining) return renderSignIn();
+  if (store.ready || store.mode === "local") [settings, kids] = await Promise.all([store.getSettings(), store.listKids()]);
   await route();
   if (!boot.started) {
     boot.started = true;
@@ -1615,8 +1648,12 @@ async function boot() {
     setTimeout(() => checkReminders(true), 800);
     setInterval(() => checkReminders(false), 30000);
     document.addEventListener("visibilitychange", async () => {
-      if (document.visibilityState !== "visible" || (store.mode === "cloud" && !store.user)) return;
-      kids = await store.listKids(); checkReminders(true);
+      if (document.visibilityState !== "visible" || (store.mode === "cloud" && !store.ready)) return;
+      [settings, kids] = await Promise.all([store.getSettings(), store.listKids()]);
+      const h = location.hash;
+      const busy = /\/s\/|\/daily$/.test(h);       // don't interrupt a recitation or the daily timer
+      if (!busy && !$("#alertModal")) await route();
+      checkReminders(true);
     });
   }
 }

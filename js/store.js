@@ -7,7 +7,7 @@ import { firebaseConfig } from "./firebase-config.js";
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
 /* ---------------- Local ---------------- */
-class LocalStore {
+export class LocalStore {
   constructor() { this.mode = "local"; this.user = null; }
   async init() { return true; }
   _get(k, d) { try { const v = localStorage.getItem("hifz:" + k); return v ? JSON.parse(v) : d; } catch { return d; } }
@@ -85,22 +85,25 @@ class CloudStore {
     const app = initializeApp(firebaseConfig);
     this.auth = auth.getAuth(app);
     this.db = fs.initializeFirestore(app, { localCache: fs.persistentLocalCache() });
-    await new Promise(res => { const off = auth.onAuthStateChanged(this.auth, u => { this.user = u; off(); res(); }); });
-    try { await auth.getRedirectResult(this.auth); this.user = this.auth.currentUser; } catch (e) { console.warn(e); }
+    // Every device signs in anonymously (no Google account needed). The secret family code from the
+    // setup link decides which family's data a device can see.
+    const cred = await auth.signInAnonymously(this.auth);
+    this.user = cred.user;
+    try { this.familyId = localStorage.getItem("hifz:family") || null; } catch { this.familyId = null; }
     return true;
   }
-  async signIn() {
-    const p = new this.authMod.GoogleAuthProvider();
-    try { const r = await this.authMod.signInWithPopup(this.auth, p); this.user = r.user; }
-    catch (e) {
-      if (String(e.code).includes("popup")) await this.authMod.signInWithRedirect(this.auth, p);
-      else throw e;
-    }
+  get ready() { return !!this.familyId; }
+  _setFamily(id) { this.familyId = id; try { id ? localStorage.setItem("hifz:family", id) : localStorage.removeItem("hifz:family"); } catch {} }
+  createFamily() {
+    const abc = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    const id = Array.from(crypto.getRandomValues(new Uint8Array(24)), b => abc[b % abc.length]).join("");
+    this._setFamily(id); return id;
   }
-  async signOut() { await this.authMod.signOut(this.auth); this.user = null; }
+  joinFamily(id) { if (!/^[A-Za-z0-9]{20,40}$/.test(id || "")) throw new Error("Bad family code"); this._setFamily(id); }
+  leaveFamily() { this._setFamily(null); }
 
-  _ref(...path) { return this.fs.doc(this.db, "families", this.user.uid, ...path); }
-  _col(...path) { return this.fs.collection(this.db, "families", this.user.uid, ...path); }
+  _ref(...path) { return this.fs.doc(this.db, "families", this.familyId, ...path); }
+  _col(...path) { return this.fs.collection(this.db, "families", this.familyId, ...path); }
 
   async getSettings() { const s = await this.fs.getDoc(this._ref("meta", "settings")); return s.exists() ? s.data() : {}; }
   async saveSettings(s) { await this.fs.setDoc(this._ref("meta", "settings"), s, { merge: true }); }
@@ -157,6 +160,45 @@ class CloudStore {
     for (let i = 0; i < n; i++) await this.fs.deleteDoc(this._ref("recordings", id, "chunks", String(i)));
     await this.fs.deleteDoc(this._ref("recordings", id));
   }
+}
+
+// Copy everything saved on this device (before sync was turned on) into the family's cloud data.
+// Newer progress wins per surah; minutes and streak days are merged. Local data is kept as a backup.
+export async function migrateLocal(cloud, onStatus) {
+  const key = "hifz:migrated:" + cloud.familyId;
+  try { if (localStorage.getItem(key)) return 0; } catch { return 0; }
+  const local = new LocalStore();
+  const lkids = await local.listKids();
+  const lrecs = await local.listRecordings();
+  if (!lkids.length && !lrecs.length) { try { localStorage.setItem(key, "1"); } catch {} return 0; }
+  onStatus?.("Copying this device's progress to your family…");
+  const cset = await cloud.getSettings(), lset = await local.getSettings(), addSet = {};
+  for (const [k, v] of Object.entries(lset)) if (cset[k] == null && v != null) addSet[k] = v;
+  if (Object.keys(addSet).length) await cloud.saveSettings(addSet);
+  const ckids = Object.fromEntries((await cloud.listKids()).map(k => [k.id, k]));
+  for (const lk of lkids) {
+    const ck = ckids[lk.id];
+    if (!ck) await cloud.saveKid({ ...lk });
+    else {
+      const minutes = { ...(ck.minutes || {}) };
+      for (const [d, v] of Object.entries(lk.minutes || {})) minutes[d] = Math.max(minutes[d] || 0, v);
+      const days = [...new Set([...(ck.days || []), ...(lk.days || [])])].sort().slice(-120);
+      await cloud.saveKid({ id: lk.id, minutes, days, stars: Math.max(ck.stars || 0, lk.stars || 0) });
+    }
+    const lp = await local.getProgress(lk.id), cp = ck ? await cloud.getProgress(lk.id) : {};
+    for (const [n, d] of Object.entries(lp))
+      if (!cp[n] || (d.updatedAt || 0) > (cp[n].updatedAt || 0)) await cloud.saveSurah(lk.id, n, d);
+  }
+  let done = 0;
+  for (const r of lrecs) {
+    const blob = await local.getRecordingBlob(r.id); if (!blob) continue;
+    const { id, createdAt, mime, size, ...meta } = r;
+    onStatus?.(`Uploading recordings… ${++done}/${lrecs.length}`);
+    const saved = await cloud.saveRecording(meta, blob);
+    await cloud.updateRecording(saved.id, { createdAt });
+  }
+  try { localStorage.setItem(key, "1"); } catch {}
+  return lkids.length + lrecs.length;
 }
 
 export async function createStore() {
