@@ -139,6 +139,7 @@ async function route() {
   const app = $("#app");
   try {
     if (store.mode === "cloud" && !store.user) return renderSignIn();
+    if (parts[0] === "join") return await importSetup(parts.slice(1).join("/"));
     if (parts[0] === "parent") return await renderParent(parts[1]);
     if (parts[0] === "kid" && kidById(parts[1])) {
       S.kidId = parts[1];
@@ -178,6 +179,10 @@ function renderSignIn() {
 /* ============ Kid picker ============ */
 function renderPicker() {
   setNav();
+  setTimeout(() => { const b = $("#pasteGo"); if (!b) return;
+    b.onclick = () => { const v = $("#pasteLink").value.trim(), i = v.indexOf("#/join/");
+      if (i < 0) return toast("That isn't a setup link. Ask your parent to send it again.");
+      location.hash = v.slice(i); }; });
   $("#app").innerHTML = `
     <div class="hero">
       <div class="bismillah">${BASMALA}</div>
@@ -191,9 +196,11 @@ function renderPicker() {
         <div class="small muted">${streak(k) ? `${I.flame} ${streak(k)}-day streak` : "Tap to start"}</div>
       </a>`).join("")}</div>`
     : `<div class="card" style="text-align:center;max-width:460px;margin:20px auto">
-        <h3>Let's get set up</h3>
-        <p class="muted">A parent adds each child's name first.</p>
-        <a class="btn" href="#/parent">${I.lock} Open parent area</a></div>`}
+        <h3>No one is set up on this device yet</h3>
+        <p class="muted"><b>Kids:</b> ask your parent to send you the <b>setup link</b> and open it on this device.</p>
+        <p class="muted small"><b>Parent:</b> open the parent area, add the children, then tap <b>“📲 Share with kids”</b>.</p>
+        <div class="row" style="margin:12px 0"><input type="text" id="pasteLink" placeholder="…or paste the setup link here" style="flex:1"><button class="btn sm" id="pasteGo">Go</button></div>
+        <a class="btn ghost sm" href="#/parent">${I.lock} Open parent area</a></div>`}
     ${store.mode === "local" ? `<p class="small muted" style="text-align:center;margin-top:28px">Saving on this device only${store.cloudError ? " (sync error — see Parent area)" : ""}.</p>` : ""}`;
 }
 
@@ -1384,7 +1391,10 @@ async function renderParent(sub) {
 
   app.innerHTML = `
     <div class="row"><h1 style="margin:0">Parent dashboard</h1><span class="spacer"></span>
+      ${kids.length ? `<button class="btn gold sm" id="shareb">📲 Share with kids</button>
+      <a class="btn sm" href="#/" id="kidsb">👧 Kids' screen</a>` : ""}
       <button class="btn ghost sm" id="lockb">${I.lock} Lock</button></div>
+    <div id="sharebox"></div>
     <div style="margin-top:10px">${syncBanner()}</div>
     ${kids.length ? `
       <div class="kid-tabs" style="margin-top:14px">${kids.map(k => `<a class="kid-tab" href="#/parent/${k.id}" aria-selected="${k.id === sel}" style="text-decoration:none;color:inherit"><span class="avatar" style="width:30px;height:30px;font-size:1.1rem;margin:0;background:${esc(k.color || COLORS[0])}">${esc(k.avatar || "⭐")}</span>${esc(k.name)}</a>`).join("")}</div>
@@ -1411,6 +1421,8 @@ async function renderParent(sub) {
     </div>`;
 
   $("#lockb").onclick = () => { sessionStorage.removeItem("hifz:unlocked"); location.hash = "#/"; };
+  $("#kidsb") && ($("#kidsb").onclick = () => sessionStorage.removeItem("hifz:unlocked"));
+  $("#shareb") && ($("#shareb").onclick = () => showShare());
   $("#reps").onchange = async e => { settings.reps = +e.target.value; await store.saveSettings({ reps: settings.reps }); toast(`Each ayah: ${settings.reps} repeats`); };
   $("#checkme").onchange = async e => { settings.checkMe = e.target.checked; await store.saveSettings({ checkMe: settings.checkMe }); toast(settings.checkMe ? "Check me is on" : "Check me is off"); };
   $("#defrec").onchange = async e => { settings.reciter = e.target.value; await store.saveSettings({ reciter: settings.reciter }); toast("Reciter saved"); };
@@ -1540,6 +1552,55 @@ function kidsCard() {
       await store.deleteKid(k.id); kids = kids.filter(x => x.id !== k.id); renderParent();
     }
   };
+}
+
+/* ============ Setup link: copies the children (and settings) to another device ============ */
+const b64url = str => btoa(String.fromCharCode(...new TextEncoder().encode(str))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const unb64url = str => new TextDecoder().decode(Uint8Array.from(atob(str.replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0)));
+function setupLink(onlyId) {
+  const list = kids.filter(k => !onlyId || k.id === onlyId).map(k => ({ id: k.id, name: k.name, avatar: k.avatar, color: k.color,
+    goalMin: k.goalMin, reminderTime: k.reminderTime, reminderOn: k.reminderOn }));
+  const data = { v: 1, kids: list, set: { reciter: settings.reciter, reps: settings.reps, checkMe: settings.checkMe, pinHash: settings.pinHash } };
+  return location.origin + location.pathname + "#/join/" + b64url(JSON.stringify(data));
+}
+function showShare() {
+  const box = $("#sharebox");
+  const opts = [["", "All children"], ...kids.map(k => [k.id, `${k.avatar || "⭐"} Only ${k.name}`])];
+  box.innerHTML = `<div class="card" style="margin-top:12px;border:2px solid var(--gold)">
+    <h3>📲 Send the app to your kids</h3>
+    <p class="small muted" style="margin-top:0">Send this link to each child's phone or tablet. Opening it adds them to that device, ready to start. (Progress is saved on the device they use.)</p>
+    <div class="row"><select id="shareWho" style="width:auto">${opts.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join("")}</select></div>
+    <div class="row" style="margin-top:10px">
+      <input type="text" id="shareUrl" readonly style="flex:1;min-width:200px;font-size:.85rem">
+      <button class="btn sm" id="copyb">Copy link</button>
+      ${navigator.share ? `<button class="btn gold sm" id="sendb">Send…</button>` : ""}
+    </div></div>`;
+  const upd = () => { $("#shareUrl").value = setupLink($("#shareWho").value); };
+  upd(); $("#shareWho").onchange = upd;
+  $("#copyb").onclick = async () => {
+    try { await navigator.clipboard.writeText($("#shareUrl").value); toast("Link copied — paste it in a message to your kids"); }
+    catch { $("#shareUrl").select(); document.execCommand("copy"); toast("Link copied"); }
+  };
+  $("#sendb") && ($("#sendb").onclick = () => navigator.share({ title: "Hifz Path", text: "Your Qur'an app 🌙 Open this link to start:", url: $("#shareUrl").value }).catch(() => {}));
+  box.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+async function importSetup(code) {
+  let data;
+  try { data = JSON.parse(unb64url(code)); } catch { toast("That setup link looks broken. Ask your parent to send it again."); location.hash = "#/"; return; }
+  let added = 0;
+  for (const k of data.kids || []) {
+    if (!k?.id || !k?.name) continue;
+    const ex = kidById(k.id);
+    const kid = { ...k, ...(ex ? {} : { createdAt: Date.now(), days: [] }) };
+    await store.saveKid(kid);
+    if (ex) Object.assign(ex, k); else { kids.push(kid); added++; }
+  }
+  const set = Object.fromEntries(Object.entries(data.set || {}).filter(([k, v]) => v !== undefined && v !== null && !(k === "pinHash" && settings.pinHash)));
+  if (Object.keys(set).length) { Object.assign(settings, set); await store.saveSettings(set); }
+  history.replaceState(null, "", location.pathname + "#/");
+  const names = (data.kids || []).map(k => k.name).join(" & ");
+  if ((data.kids || []).length === 1) { location.hash = `#/kid/${data.kids[0].id}`; } else route();
+  toast(added ? `Welcome, ${names}! 🌙` : `${names} updated on this device`);
 }
 
 /* ============ Boot ============ */
